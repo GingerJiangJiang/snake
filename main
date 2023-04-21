@@ -1,0 +1,606 @@
+import turtle
+import sys
+import random
+from time import time
+from random import uniform
+from random import randint
+
+g_game_end = False # True if the Game is about to end
+
+g_window = turtle.Screen()           # turtle.Screen Obj: Screen
+g_status_area = turtle.Turtle()      # turtle.Turtle Obj: Status Area
+g_status_title = turtle.Turtle()     # turtle.Turtle Obj: Status Heading
+g_status_var = turtle.Turtle()       # turtle.Turtle Obj: Status Variable
+g_motion_area = turtle.Turtle()      # turtle.Turtle Obj: Motion Area
+g_welcome_message = turtle.Turtle()  # turtle.Turtle Obj: Welcome_message
+
+g_current_moving_direction = 4  # When game starts, default direction is Right
+g_last_moving_direction = 4     # Record Last step moving direction
+g_body_contact_time = 0         # Monster- Body contact time
+g_start_time = time()           # Time of the Start of the Game
+g_cnt_advance_tasks = 4         # Length of snake body awaiting to grow
+                                # Initial snake body length: 5
+g_food_items = []               # food_itmes: [(food, value), ...]
+g_snake_stamp_queue = []        # Snake body
+g_snake_stamp_posi_queue = []   # Snake body position, using to check body-monster collision
+xpos = []
+ypos = []
+
+g_snake = turtle.Turtle()       # turtle.Turtle Obj: snake
+g_snake_head_color = 'red'  # snake head color
+g_snake_body_color = 'yellow'  # snake body color
+
+g_monster = turtle.Turtle()     # turtle.Turtle Obj: monster
+g_monster_color = 'purple'     # monster color
+
+time_last_dis = time()          # last time call disappear function
+
+# Direction Hashmap 
+g_dict_direction = {
+    0: 'pause',
+    1: 'up',
+    2: 'down',
+    3: 'left',
+    4: 'right',
+}
+
+# Direction Availablity Hashmap, record which direction(s) are prohibited
+g_directions_availablity = {
+    0: True,
+    1: True,
+    2: True,
+    3: True,
+    4: True,
+}
+
+# Config screen layout
+def config_screen():
+    global g_window
+    global g_status_area
+    global g_status_title
+    global g_status_var
+    global g_motion_area
+    global g_welcome_message
+    motion_area_size = (500,500)
+    status_area_size = (500,80)
+    margin_size = 80
+    window_size = (
+        2 * margin_size + motion_area_size[0],
+        2 * margin_size + motion_area_size[1] + status_area_size[1],
+    )
+
+    # Create Screen
+    g_window.setup(
+        width= window_size[0],
+        height= window_size[1],
+    )
+    g_window.tracer(0) # Turn off auto-refresher
+
+    # Create Status Area
+    g_status_area.shape('square')
+    g_status_area.color('black','white') # Background color
+    g_status_area.speed(0)
+    g_status_area.shapesize(
+        status_area_size[1] / 20,
+        status_area_size[0] / 20, 
+        2
+    )
+    g_status_area.penup()
+    g_status_area.sety(
+        window_size[1]/2 - margin_size - status_area_size[1]/2
+    )
+    g_status_area.stamp() # Background color
+    g_status_area.color('black','')
+
+    # Configure titles in Status Area
+    g_status_title.penup()
+    g_status_title.hideturtle()
+    g_status_title.goto(-240,240)
+    g_status_title.write(
+        'Contact:%20sTime:%20sMotion:%20s'%('','',''),
+        font = ('Arial',14,'normal')
+    )
+
+    # Status Display Position Setting
+    g_status_var.penup()
+    g_status_var.hideturtle()
+    g_status_var.goto(-200,243)
+
+    # Create Motion Area
+    g_motion_area.shape('square')
+    g_motion_area.color('black',"white")
+    g_motion_area.speed(0)
+    g_motion_area.shapesize(
+        motion_area_size[1] / 20,
+        motion_area_size[0] / 20, 
+        2
+    )
+    g_motion_area.penup()
+    g_motion_area.sety(
+        -window_size[1]/2 + margin_size + motion_area_size[1]/2
+    )
+    g_motion_area.stamp() # background color
+    g_motion_area.color('black','')
+
+    # Welcome Message
+    welcome_txt = \
+        'Welcome to Donald Wong \'s version of snake ...\n\n'+\
+        'You are going to use 4 arrow keys to move the snake\n'+\
+        'Try to consume all the food!\n'+\
+        'Don\'t let the monster catch you!\n\n'+\
+        'Click anywhere on the screen to start the game, have fun!\n'+\
+        'Press Esc to exit the game anytime'
+    g_welcome_message.penup()
+    g_welcome_message.hideturtle()
+    g_welcome_message.goto(-240,65)
+    g_welcome_message.write(
+        welcome_txt,
+        font = ('Arial',12,'normal')
+    )
+
+def config_snake():
+    global g_snake
+    global g_snake_head_color
+    global g_snake_body_color
+    g_snake.penup()
+    g_snake.speed(0)
+    g_snake.shape('square')
+    g_snake.color(g_snake_head_color,g_snake_head_color)
+
+def config_monster():
+    global g_monster 
+    global g_monster_color
+    g_monster.penup()
+    g_monster.speed(0)
+    g_monster.shape('square')
+    g_monster.color(g_monster_color,g_monster_color)
+
+def refresh_status():
+    ''' Refresh Status in status area. Refresh once per call.
+
+        Param: void
+        Return: void
+    '''
+    global g_start_time
+    g_status_var.clear() # Wipe old status
+    # Formating write new status
+    g_status_var.write(
+        '\t{:3d}  \t\t{:4d} \t\t{:5s}'.format(
+            g_body_contact_time,
+            round(time()-g_start_time), # round time used to integer
+            # Convert computer-read number to user-read string with direction hashmap
+            g_dict_direction[g_current_moving_direction], 
+        ),font=('Arial',12,'normal')
+    )
+
+def place_monster():
+    ''' Randomly place monster in the motion area,
+        and guarantee fair initial distance between snake and monster.
+
+        Param: void
+        Return: void
+    '''
+    global g_snake
+    global g_monster
+    x = uniform(-220,220) # Random float
+    y = uniform(-260,60)
+    g_monster.goto(x,y)
+    # Distance Control, if too close, re-position the monster
+    if g_monster.distance(g_snake) < 120:
+        place_monster()
+
+def monster_move():
+    ''' Moving the monster to 1 of 4 adjacent slots,
+        the moving direction is based on the angle between monster and snake head.
+
+        Param: void
+        Return: void
+    '''
+    global g_snake
+    global g_monster
+    angle = g_monster.towards(g_snake)
+    # Round the angle to nearest 90n degree
+    nearest_90c_angle = (90*round(angle/90))
+    g_monster.setheading(nearest_90c_angle)
+    g_monster.fd(20)
+
+def ontimer_monster_move():
+    ''' Time-based monster move.
+        Moving the monster after a random time between [280ms, 720ms], inclusive.
+
+        Param: void
+        Return: void
+    '''
+    global g_body_contact_time
+    global g_game_end
+    if not g_game_end:
+        monster_move()
+        check_and_handle_body_collision()
+        turtle.ontimer(ontimer_monster_move,randint(280,720))
+
+def food_dis():
+    global g_food_items
+    s = []
+    a = random.randint(1,10)
+    while(len(s)<a):
+        x=random.randint(0,8)
+        if x not in s:
+            s.append(x)
+    for j in s:
+        g_food_items[j].clear()
+
+def food_recover():
+    for i in range(9):
+        g_food_items[i].write(str(i+1), align="center", font=("Arial", 12, "normal"))
+        
+def food_generator():
+    ''' Generate 9 foods with their reward value,
+        and add them into food_items list in form of (food_turtle_obj, value)
+
+        Param: void
+        Return: void
+    '''
+    global g_food_items
+    global xpos, ypos
+    g_food_items = []
+    for i in range(9):
+        food = turtle.Turtle()
+        food.hideturtle()
+        food.speed(0)
+        food.penup()
+        # Place food in random 20n place, to keep consistent with snake size
+        real_x = randint(-12,12) * 20 # object x position
+        real_y = randint(-14,10) * 20 # object y position
+        # Shift object position to match the position of value label
+        food.setx( real_x - .5 )
+        food.sety( real_y - 7)
+        reward_value = i + 1
+        food.write(reward_value)
+        # Move the food object back
+        food.goto(
+            food.xcor() + 1.5,
+            food.ycor() + 7,
+        )
+        xpos.append(real_x)
+        ypos.append(real_y)
+        g_food_items.append((food,reward_value))
+
+def keybond_setup():
+    ''' Setting up keybond.
+
+        Param: void
+        Return: void
+    '''
+    g_window.onkey(change_direction_up,"Up")
+    g_window.onkey(change_direction_down,'Down')
+    g_window.onkey(change_direction_left,'Left')
+    g_window.onkey(change_direction_right,'Right')
+    g_window.onkey(change_direction_pause,'space')
+
+def screen2(x,y):
+    ''' Screen 2: Game Screen(in contrast to Starting Screen)
+        Jump to screen 2, generate foods, start timing
+        start user key listening and the monster move, 
+        finally unbond the left mouse key(Originally bond with screen2).
+
+        Param:  float x, float y
+                Must having 2 positional arguments to keep consistent with onclick
+        Return: void
+    '''
+    global g_window
+    global g_start_time
+    global g_welcome_message
+    g_welcome_message.clear()
+    food_generator()    
+    g_start_time = time()
+    g_window.update()
+    keybond_setup()
+    ontimer_monster_move()
+    ontimer_interact()
+    # Unbond Mouse Click
+    g_window.onclick(None)
+
+def change_direction_up():
+    ''' Bond with Up key, change Current Moving direction to up
+
+        Param: void
+        Return: void
+    '''
+    global g_current_moving_direction
+    g_current_moving_direction = 1
+def change_direction_down():
+    ''' Bond with Down key, change Current Moving direction to down
+
+        Param: void
+        Return: void
+    '''
+    global g_current_moving_direction
+    g_current_moving_direction = 2
+def change_direction_left():
+    ''' Bond with Left key, change Current Moving direction to left
+
+        Param: void
+        Return: void
+    '''
+    global g_current_moving_direction
+    g_current_moving_direction = 3
+def change_direction_right():
+    ''' Bond with Right key, change Current Moving direction to right
+
+        Param: void
+        Return: void
+    '''
+    global g_current_moving_direction
+    g_current_moving_direction = 4
+def change_direction_pause():
+    ''' Bond with Space bar key, 
+        odd time call, change Current Moving direction to pause
+        even time call, un-pause and resume last moving direction
+
+        Param: void
+        Return: void
+    '''
+    global g_current_moving_direction
+    global g_last_moving_direction
+    # If currently not pausing, record current direction, and pause
+    if g_current_moving_direction != 0:
+        g_last_moving_direction = g_current_moving_direction
+        g_current_moving_direction = 0
+    # If currently pausing, then un-pause it
+    else:
+        g_current_moving_direction = g_last_moving_direction
+
+def up():
+    global g_snake
+    g_snake.sety(g_snake.ycor()+20)
+def down():
+    global g_snake
+    g_snake.sety(g_snake.ycor()-20)
+def left():
+    global g_snake
+    g_snake.setx(g_snake.xcor()-20)
+def right():
+    global g_snake
+    g_snake.setx(g_snake.xcor()+20)
+
+def food_collision():
+    ''' Check snake- food collision.
+        And return the reward value of food being eaten, 
+        return 0 if no food being eaten.
+
+        Param: void
+        Return: reward value of eaten food. 0 if nothing being eaten.
+    '''
+    global g_food_items
+    global g_snake
+    for i in range(len(g_food_items)):
+        food = g_food_items[i]
+        if g_snake.distance(food[0]) < 10: # Hitbox Radius: 10 pxs
+            food[0].clear() # clear value of that food
+            g_food_items.pop(i) # pop that food out of list
+            return food[1] #return the value of food eaten
+    return 0
+
+def grow_and_crawl():
+    ''' Increase the length of snake by 1 snake size,
+        then move to new position.
+
+        Param: void
+        Return: void
+    '''
+    global g_snake_head_color
+    global g_snake_body_color
+    global g_snake
+    global g_snake_stamp_queue
+    global g_snake_stamp_posi_queue
+    # stamp current position
+    g_snake.color('black', g_snake_body_color)
+    stamp_id = g_snake.stamp()
+    # move to new position
+    g_snake_stamp_queue.insert(0,stamp_id)
+    g_snake_stamp_posi_queue.insert(0,g_snake.position())
+    g_snake.color(g_snake_head_color, g_snake_head_color)
+
+def crawl():
+    ''' Move snake to new position.
+
+        Params: void
+        Return: void
+    '''
+    global g_snake
+    global g_snake_stamp_queue
+    global g_snake_stamp_posi_queue
+    # Remove old stamp
+    if len(g_snake_stamp_queue) > 0:
+        stamp_id = g_snake_stamp_queue.pop()
+        g_snake.clearstamp(stamp_id)
+        g_snake_stamp_posi_queue.pop()
+    grow_and_crawl()
+
+def check_head_on_collision():
+    ''' Check head-on collision between snake and monster.
+
+        Param: void
+        Return: True if collide, False else.
+    '''
+    global g_window
+    global g_monster
+    global g_snake
+    if g_snake.distance(g_monster) <= 20:
+        return True
+    return False
+
+def check_and_handle_body_collision():
+    ''' Check body collision between snake and monster,
+        and increment body contact time.
+
+        Param: void
+        Return: True if collide, False else.
+    '''
+    global g_body_contact_time
+    global g_snake_stamp_posi_queue
+    for e in g_snake_stamp_posi_queue:
+        if g_monster.distance(e) <= 20:
+            g_body_contact_time += 1
+            return
+    return
+
+def check_and_handle_boundary_collision():
+    ''' Check boundary and modify g_direction_availablity dictionary.
+
+        Param: void
+        Return: True if collide, False else.
+    '''
+    global g_snake
+    global g_directions_availablity
+    flag_hit_boundary = False
+    # if next step would exceed right boarder, block
+    if g_snake.xcor() > 250 - 20:
+        g_directions_availablity[4] = False
+        flag_hit_boundary = True
+    # if not, unblock
+    else: g_directions_availablity[4] = True
+    # if next step would exceed left boarder, block
+    if g_snake.xcor() < -250 + 20: 
+        g_directions_availablity[3] = False
+        flag_hit_boundary = True
+    # if not, unblock
+    else: g_directions_availablity[3] = True
+    # if next step would exceed upper boarder, block
+    if g_snake.ycor() > 210 - 20: 
+        g_directions_availablity[1] = False
+        flag_hit_boundary = True
+    # if not, unblock
+    else: g_directions_availablity[1] = True
+    # if next step would exceed lower boarder, block
+    if g_snake.ycor() < -290 + 20: 
+        g_directions_availablity[2] = False
+        flag_hit_boundary = True
+    # if not, unblock
+    else: g_directions_availablity[2] = True
+    
+    return flag_hit_boundary
+
+def check_victory():
+    ''' Check if victory condition is met.
+        
+        Param: void
+        Return: True if all food is consumed up, False else .
+    '''
+    global g_food_items
+    global g_snake_stamp_queue
+    if len(g_food_items) == 0:
+        return True
+    return False
+        
+def ontime_food_disappear():  # sourcery skip: extract-method
+    global g_food_items
+    global time_last_dis        
+    global g_food_items
+    global xpos, ypos
+    if((time() - time_last_dis) >= 3):
+        time_last_dis = time()
+
+        g_food_items = []
+        for i in range(9):
+            food = turtle.Turtle()
+            food.hideturtle()
+            food.speed(0)
+            food.penup()
+            # Place food in random 20n place, to keep consistent with snake size
+            food.setx( xpos[i] - .5 )
+            food.sety( ypos[i] - 7)
+            reward_value = i + 1
+            food.write(reward_value)
+            # Move the food object back
+            food.goto(
+                food.xcor() + 1.5,
+                food.ycor() + 7,
+            )
+            g_food_items.append((food,reward_value))
+        # clear value of that food
+        # if(len(g_food_items)>1):
+        #     food = g_food_items.pop()
+        #     food[0].clear() # clear value of that food
+
+def ontimer_interact():
+    ''' Time-based user interact interface.
+        Check victory, listen user's input, and apply user's decision
+
+        Param: void
+        Return: void
+    '''
+    global g_window
+    global g_current_moving_direction
+    global g_dict_direction
+    global g_cnt_advance_tasks
+    global g_game_end
+    refresh_status()
+    # eat food and prepare to grow longer
+    g_cnt_advance_tasks += food_collision()
+
+    ontime_food_disappear()
+
+    # end game if all food consumed up
+    if check_victory():
+        g_snake.write(
+            'Winner !!',
+            font = ('Arial',14,'bold')
+        )
+        g_game_end = True
+        return
+    # If Not hit wall and this direction is availiable
+    if not(
+            check_and_handle_boundary_collision() and \
+            (not g_directions_availablity[g_current_moving_direction])
+        ):
+        if g_current_moving_direction != 0:
+            # Moving snake based on current moving mode
+            eval(g_dict_direction[g_current_moving_direction]+'()')
+            # if growing longer is prepared, then grow
+            if g_cnt_advance_tasks > 0:
+                grow_and_crawl()
+                g_cnt_advance_tasks -= 1
+            # if not, simply move
+            else:
+                crawl()
+    # end game if head-on collide with monster
+    if check_head_on_collision():
+        g_window.update()
+        g_monster.write(
+            'Game Over !!',
+            font = ('Arial',14,'bold')
+        )
+        g_game_end = True
+        return
+    # refresh screen
+    g_window.update()
+    if g_cnt_advance_tasks > 0:
+        # if growing, start next move in 400ms
+        turtle.ontimer(ontimer_interact,400)
+    else:
+        # if not growing, start next move in 300ms
+        turtle.ontimer(ontimer_interact,300)
+
+# Start Game
+def main():
+    ''' Screen 1: Starting screen (In contrast to screen 2)
+
+        Param: void
+        Return: void
+    '''
+    global g_window
+    config_screen()
+    config_snake()
+    config_monster()
+    refresh_status()
+    # Randomly place monster
+    place_monster()
+    g_window.update()
+    g_window.onclick(screen2,1) # Click left mouse button to call start_game
+    g_window.onkey(sys.exit,'Escape') # press esc to exit
+    g_window.listen()
+    g_window.mainloop()
+
+if __name__ == '__main__':
+    main()
